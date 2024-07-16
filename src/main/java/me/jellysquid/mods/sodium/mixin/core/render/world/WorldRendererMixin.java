@@ -41,9 +41,6 @@ public abstract class WorldRendererMixin implements WorldRendererExtended {
     @Unique
     private SodiumWorldRenderer renderer;
 
-    @Unique
-    private int frame;
-
     @Override
     public SodiumWorldRenderer sodium$getWorldRenderer() {
         return this.renderer;
@@ -122,7 +119,7 @@ public abstract class WorldRendererMixin implements WorldRendererExtended {
         RenderDevice.enterManagedCode();
 
         try {
-            this.renderer.setupTerrain(camera, viewport, this.frame++, spectator, updateChunksImmediately);
+            this.renderer.setupTerrain(camera, viewport, spectator, updateChunksImmediately);
         } finally {
             RenderDevice.exitManagedCode();
         }

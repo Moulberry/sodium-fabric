@@ -104,13 +104,13 @@ public class RenderSectionManager {
         }
     }
 
-    public void update(Camera camera, Viewport viewport, int frame, boolean spectator) {
+    public void update(Camera camera, Viewport viewport, boolean spectator) {
         this.lastCameraPosition = camera.getBlockPos();
+        this.lastUpdatedFrame += 1;
 
-        this.createTerrainRenderList(camera, viewport, frame, spectator);
+        this.createTerrainRenderList(camera, viewport, this.lastUpdatedFrame, spectator);
 
         this.needsUpdate = false;
-        this.lastUpdatedFrame = frame;
     }
 
     private void createTerrainRenderList(Camera camera, Viewport viewport, int frame, boolean spectator) {
