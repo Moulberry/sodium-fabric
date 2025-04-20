@@ -18,7 +18,7 @@ jobs:
           java-version: 21
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v3
         with:
           cache-read-only: true
 
@@ -28,5 +28,6 @@ jobs:
       - name: Upload assets to GitHub
         uses: AButler/upload-release-assets@v2.0
         with:
-          files: 'build/mods/*.jar'
+          # Filter built files to disregard -sources and -dev, and leave only the minecraft-compatible jars.
+          files: 'build/libs/*[0-9].jar;LICENSE'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
