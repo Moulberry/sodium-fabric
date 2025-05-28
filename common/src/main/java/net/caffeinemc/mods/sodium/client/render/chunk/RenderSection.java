@@ -4,6 +4,7 @@ import net.caffeinemc.mods.sodium.client.render.chunk.data.BuiltSectionInfo;
 import net.caffeinemc.mods.sodium.client.render.chunk.occlusion.GraphDirection;
 import net.caffeinemc.mods.sodium.client.render.chunk.occlusion.GraphDirectionSet;
 import net.caffeinemc.mods.sodium.client.render.chunk.occlusion.VisibilityEncoding;
+import net.caffeinemc.mods.sodium.client.render.chunk.occlusion.ZBufferVisibilityFlags;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.data.TranslucentData;
 import net.caffeinemc.mods.sodium.client.util.task.CancellationToken;
@@ -31,9 +32,7 @@ public class RenderSection {
 
     private int incomingDirections;
     private int lastVisibleFrame = -1;
-    private boolean needsVisibilityCheck = false;
-    private boolean failedVisibilityCheck = false;
-    private int visibilityQueryId = -1;
+    private int zBufferVisibilityState = ZBufferVisibilityFlags.STATE_UNKNOWN;
 
     private int adjacentMask;
     public RenderSection
@@ -306,28 +305,12 @@ public class RenderSection {
         this.incomingDirections = directions;
     }
 
-    public boolean needsVisibilityCheck() {
-        return this.needsVisibilityCheck;
+    public int getZBufferVisibilityFlags() {
+        return this.zBufferVisibilityState;
     }
 
-    public void setNeedsVisibilityCheck(boolean needsVisibilityCheck) {
-        this.needsVisibilityCheck = needsVisibilityCheck;
-    }
-
-    public boolean failedVisibilityCheck() {
-        return this.failedVisibilityCheck;
-    }
-
-    public void setFailedVisibilityCheck(boolean failedVisibilityCheck) {
-        this.failedVisibilityCheck = failedVisibilityCheck;
-    }
-
-    public int getVisibilityQueryId() {
-        return this.visibilityQueryId;
-    }
-
-    public void setVisibilityQueryId(int visibilityQueryId) {
-        this.visibilityQueryId = visibilityQueryId;
+    public void setZBufferVisibilityFlags(int zBufferVisibilityState) {
+        this.zBufferVisibilityState = zBufferVisibilityState;
     }
 
     /**

@@ -1,10 +1,6 @@
 package net.caffeinemc.mods.sodium.client.render.chunk;
 
-import com.mojang.blaze3d.systems.RenderSystem;
-import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
-import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
-import it.unimi.dsi.fastutil.ints.IntList;
+import it.unimi.dsi.fastutil.ints.*;
 import it.unimi.dsi.fastutil.longs.Long2ReferenceMap;
 import it.unimi.dsi.fastutil.longs.Long2ReferenceMaps;
 import it.unimi.dsi.fastutil.longs.Long2ReferenceOpenHashMap;
@@ -30,6 +26,7 @@ import net.caffeinemc.mods.sodium.client.render.chunk.lists.ChunkRenderList;
 import net.caffeinemc.mods.sodium.client.render.chunk.lists.SortedRenderLists;
 import net.caffeinemc.mods.sodium.client.render.chunk.lists.VisibleChunkCollector;
 import net.caffeinemc.mods.sodium.client.render.chunk.occlusion.GraphDirection;
+import net.caffeinemc.mods.sodium.client.render.chunk.occlusion.HierarchicalZBufferOccluder;
 import net.caffeinemc.mods.sodium.client.render.chunk.occlusion.OcclusionCuller;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegionManager;
@@ -42,7 +39,6 @@ import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.data.T
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.trigger.CameraMovement;
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.trigger.SortTriggering;
 import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.ChunkMeshFormats;
-import net.caffeinemc.mods.sodium.client.render.immediate.DummyVisibilityCheckRenderer;
 import net.caffeinemc.mods.sodium.client.render.util.RenderAsserts;
 import net.caffeinemc.mods.sodium.client.render.viewport.CameraTransform;
 import net.caffeinemc.mods.sodium.client.render.viewport.Viewport;
@@ -63,7 +59,6 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import org.apache.commons.lang3.ArrayUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.joml.Matrix4f;
 import org.joml.Vector3dc;
 import org.lwjgl.opengl.*;
 
@@ -80,14 +75,8 @@ public class RenderSectionManager {
 
     private final ConcurrentLinkedDeque<ChunkJobResult<? extends BuilderTaskOutput>> buildResults = new ConcurrentLinkedDeque<>();
 
-    // todo: move all of this into a different class
-    private final IntList availableQueryObjects = new IntArrayList(32);
-    private final List<RenderSection> pendingFinishVisibilityQuery = new ArrayList<>();
-    private List<RenderSection> pendingStartVisibilityQuery = new ArrayList<>();
-    private int lastVisibilityQuery = -1;
-    private int lastTotalVisibilityQueryCount = 0;
-    private int lastPassedVisibilityQueryCount = 0;
-    private int bestOcclusionQueryObjectType = GL31C.GL_SAMPLES_PASSED;
+    private int lastVisibilityQueryCount = 0;
+    private List<RenderSection> sectionsThatNeedVisibilityQueries = List.of();
 
     private final ChunkRenderer chunkRenderer;
 
@@ -138,15 +127,6 @@ public class RenderSectionManager {
         for (var type : ChunkUpdateType.values()) {
             this.taskLists.put(type, new ArrayDeque<>());
         }
-
-        var capabilities = RenderDevice.INSTANCE.getCapabilities();
-        if (capabilities.OpenGL43) {
-            this.bestOcclusionQueryObjectType = GL43.GL_ANY_SAMPLES_PASSED_CONSERVATIVE;
-        } else if (capabilities.OpenGL33 || capabilities.GL_ARB_occlusion_query2) {
-            this.bestOcclusionQueryObjectType = GL33.GL_ANY_SAMPLES_PASSED;
-        } else {
-            this.bestOcclusionQueryObjectType = GL15.GL_SAMPLES_PASSED;
-        }
     }
 
     public void updateCameraState(Vector3dc cameraPosition, Camera camera) {
@@ -174,7 +154,7 @@ public class RenderSectionManager {
 
         this.renderLists = visitor.createRenderLists(viewport);
         this.taskLists = visitor.getRebuildLists();
-        this.pendingStartVisibilityQuery = visitor.getSectionsThatNeedVisibilityCheck();
+        this.sectionsThatNeedVisibilityQueries = this.occlusionCuller.sectionsThatNeedVisibilityCheck(); // todo: avoid copy
     }
 
     private float getSearchDistance(FogParameters fogParameters) {
@@ -282,83 +262,98 @@ public class RenderSectionManager {
         if (!DO_VISIBILITY_CHECKS) {
             return;
         }
-        if (this.pendingFinishVisibilityQuery.isEmpty()) {
-            return;
-        }
-        if (GL31C.glGetQueryObjecti(this.lastVisibilityQuery, GL31C.GL_QUERY_RESULT_AVAILABLE) == GL31C.GL_FALSE) {
-            return;
-        }
-
-        this.lastTotalVisibilityQueryCount = this.pendingFinishVisibilityQuery.size();
-        this.lastPassedVisibilityQueryCount = 0;
-
-        for (RenderSection section : this.pendingFinishVisibilityQuery) {
-            int query = section.getVisibilityQueryId();
-
-            boolean passed = GL31C.glGetQueryObjecti(query, GL31C.GL_QUERY_RESULT) > 0;
-            section.setFailedVisibilityCheck(!passed);
-            section.setVisibilityQueryId(-1);
-
-            if (passed) {
-                this.lastPassedVisibilityQueryCount += 1;
-            }
-
-            this.availableQueryObjects.add(query);
-
-        }
-
-        this.pendingFinishVisibilityQuery.clear();
-        this.lastVisibilityQuery = -1;
+        this.needsGraphUpdate |= hierarchicalZBufferOccluder.pollAndApplySectionTests();
+//        if (this.pendingFinishVisibilityQuery.isEmpty()) {
+//            return;
+//        }
+//        if (GL31C.glGetQueryObjecti(this.lastVisibilityQuery, GL31C.GL_QUERY_RESULT_AVAILABLE) == GL31C.GL_FALSE) {
+//            return;
+//        }
+//
+//        this.lastTotalVisibilityQueryCount = this.pendingFinishVisibilityQuery.size();
+//        this.lastPassedVisibilityQueryCount = 0;
+//
+//        for (RenderSection section : this.pendingFinishVisibilityQuery) {
+//            int query = section.getVisibilityQueryId();
+//
+//            boolean passed = GL31C.glGetQueryObjecti(query, GL31C.GL_QUERY_RESULT) > 0;
+//            section.setFailedVisibilityCheck(!passed);
+//            section.setVisibilityQueryId(-1);
+//
+//            if (passed) {
+//                this.lastPassedVisibilityQueryCount += 1;
+//            }
+//
+//            this.availableQueryObjects.add(query);
+//
+//        }
+//
+//        this.pendingFinishVisibilityQuery.clear();
+//        this.lastVisibilityQuery = -1;
     }
 
+    HierarchicalZBufferOccluder hierarchicalZBufferOccluder = new HierarchicalZBufferOccluder();
+
     public void performVisibilityChecks(ChunkRenderMatrices matrices, double x, double y, double z) {
+        this.lastVisibilityQueryCount = 0;
         if (!DO_VISIBILITY_CHECKS) {
             return;
         }
-        if (this.pendingStartVisibilityQuery.isEmpty()) {
+        if (this.sectionsThatNeedVisibilityQueries.isEmpty() || Minecraft.getInstance().player.getInventory().selected == 8) {
             return;
         }
-        if (!this.pendingFinishVisibilityQuery.isEmpty()) {
-            this.finishVisibilityChecks();
-            if (!this.pendingFinishVisibilityQuery.isEmpty()) {
-                return;
-            }
-        }
 
-        Matrix4f modelView = new Matrix4f(matrices.modelView());
+        var mainRenderTarget = Minecraft.getInstance().getMainRenderTarget();
+        int sourceDepth = mainRenderTarget.getDepthTextureId();
+        int width = mainRenderTarget.width;
+        int height = mainRenderTarget.height;
 
-        RenderSystem.colorMask(false, false, false, false);
-        RenderSystem.depthMask(false);
+        hierarchicalZBufferOccluder.generateMipChain(sourceDepth, width, height);
+        this.lastVisibilityQueryCount = this.sectionsThatNeedVisibilityQueries.size();
+        hierarchicalZBufferOccluder.submitSectionTest(matrices.projection(), matrices.modelView(), x, y, z, this.sectionsThatNeedVisibilityQueries);
 
-        DummyVisibilityCheckRenderer.setup(new Matrix4f(matrices.projection()));
-
-        for (RenderSection section : this.pendingStartVisibilityQuery) {
-            section.setNeedsVisibilityCheck(false);
-
-            int query;
-            if (this.availableQueryObjects.isEmpty()) {
-                query = GL31C.glGenQueries();
-            } else {
-                query = this.availableQueryObjects.removeInt(this.availableQueryObjects.size() - 1);
-            }
-
-            GL30C.glBeginQuery(this.bestOcclusionQueryObjectType, query);
-
-            DummyVisibilityCheckRenderer.render(section.getOriginX() - x, section.getOriginY() - y, section.getOriginZ() - z, modelView);
-
-            GL31C.glEndQuery(this.bestOcclusionQueryObjectType);
-
-            section.setVisibilityQueryId(query);
-            this.pendingFinishVisibilityQuery.add(section);
-            this.lastVisibilityQuery = query;
-        }
-
-        DummyVisibilityCheckRenderer.teardown();
-
-        RenderSystem.colorMask(true, true, true, true);
-        RenderSystem.depthMask(true);
-
-        this.pendingStartVisibilityQuery.clear();
+//        if (this.pendingStartVisibilityQuery.isEmpty()) {
+//            return;
+//        }
+//        if (!this.pendingFinishVisibilityQuery.isEmpty()) {
+//            this.finishVisibilityChecks();
+//            if (!this.pendingFinishVisibilityQuery.isEmpty()) {
+//                return;
+//            }
+//        }
+//
+//        Matrix4f modelView = new Matrix4f(matrices.modelView());
+//
+//        RenderSystem.colorMask(false, false, false, false);
+//        RenderSystem.depthMask(false);
+//
+//        DummyVisibilityCheckRenderer.setup(new Matrix4f(matrices.projection()));
+//
+//        for (RenderSection section : this.pendingStartVisibilityQuery) {
+//            section.setNeedsVisibilityCheck(false);
+//
+//            int query;
+//            if (this.availableQueryObjects.isEmpty()) {
+//                query = GL31C.glGenQueries();
+//            } else {
+//                query = this.availableQueryObjects.removeInt(this.availableQueryObjects.size() - 1);
+//            }
+//
+//            GL30C.glBeginQuery(this.bestOcclusionQueryObjectType, query);
+//
+//            DummyVisibilityCheckRenderer.render(section.getOriginX() - x, section.getOriginY() - y, section.getOriginZ() - z, modelView);
+//
+//            GL31C.glEndQuery(this.bestOcclusionQueryObjectType);
+//
+//            section.setVisibilityQueryId(query);
+//            this.pendingFinishVisibilityQuery.add(section);
+//            this.lastVisibilityQuery = query;
+//        }
+//
+//        DummyVisibilityCheckRenderer.teardown();
+//
+//        RenderSystem.colorMask(true, true, true, true);
+//        RenderSystem.depthMask(true);
     }
 
     public void tickVisibleRenders() {
@@ -831,7 +826,7 @@ public class RenderSectionManager {
 
         this.sortTriggering.addDebugStrings(list);
 
-        list.add(String.format("Visibility Queries: P=%d T=%d", this.lastPassedVisibilityQueryCount, this.lastTotalVisibilityQueryCount));
+        list.add(String.format("Visibility Queries: %d", this.lastVisibilityQueryCount));
 
         return list;
     }

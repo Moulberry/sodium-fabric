@@ -23,7 +23,6 @@ import java.util.Queue;
 public class VisibleChunkCollector implements OcclusionCuller.Visitor {
     private final ObjectArrayList<ChunkRenderList> sortedRenderLists;
     private final EnumMap<ChunkUpdateType, ArrayDeque<RenderSection>> sortedRebuildLists;
-    private final List<RenderSection> needVisibilityCheck = new ArrayList<>();
 
     private final int frame;
 
@@ -52,9 +51,6 @@ public class VisibleChunkCollector implements OcclusionCuller.Visitor {
             }
 
             renderList.add(section);
-        }
-        if (RenderSectionManager.DO_VISIBILITY_CHECKS && section.needsVisibilityCheck()) {
-            this.needVisibilityCheck.add(section);
         }
 
         // always add to rebuild lists though, because it might just not be built yet
@@ -114,9 +110,5 @@ public class VisibleChunkCollector implements OcclusionCuller.Visitor {
 
     public Map<ChunkUpdateType, ArrayDeque<RenderSection>> getRebuildLists() {
         return this.sortedRebuildLists;
-    }
-
-    public List<RenderSection> getSectionsThatNeedVisibilityCheck() {
-        return this.needVisibilityCheck;
     }
 }

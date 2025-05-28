@@ -264,8 +264,8 @@ public class SodiumWorldRenderer {
     public void drawChunkLayer(RenderType renderLayer, ChunkRenderMatrices matrices, double x, double y, double z) {
         if (renderLayer == RenderType.solid()) {
             this.renderSectionManager.renderLayer(matrices, DefaultTerrainRenderPasses.SOLID, x, y, z);
-            this.renderSectionManager.renderLayer(matrices, DefaultTerrainRenderPasses.CUTOUT, x, y, z);
             this.renderSectionManager.performVisibilityChecks(matrices, x, y, z);
+            this.renderSectionManager.renderLayer(matrices, DefaultTerrainRenderPasses.CUTOUT, x, y, z);
         } else if (renderLayer == RenderType.translucent()) {
             this.renderSectionManager.renderLayer(matrices, DefaultTerrainRenderPasses.TRANSLUCENT, x, y, z);
         }

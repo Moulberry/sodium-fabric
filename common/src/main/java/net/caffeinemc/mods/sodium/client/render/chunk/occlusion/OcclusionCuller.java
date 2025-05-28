@@ -2,23 +2,27 @@ package net.caffeinemc.mods.sodium.client.render.chunk.occlusion;
 
 import it.unimi.dsi.fastutil.longs.Long2ReferenceMap;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSection;
-import net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionFlags;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionManager;
 import net.caffeinemc.mods.sodium.client.render.viewport.CameraTransform;
 import net.caffeinemc.mods.sodium.client.render.viewport.Viewport;
 import net.caffeinemc.mods.sodium.client.util.collections.DoubleBufferedQueue;
 import net.caffeinemc.mods.sodium.client.util.collections.ReadQueue;
 import net.caffeinemc.mods.sodium.client.util.collections.WriteQueue;
+import net.minecraft.client.Minecraft;
 import net.minecraft.core.SectionPos;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
 import org.jetbrains.annotations.NotNull;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class OcclusionCuller {
     private final Long2ReferenceMap<RenderSection> sections;
     private final Level level;
 
     private final DoubleBufferedQueue<RenderSection> queue = new DoubleBufferedQueue<>();
+    private final List<RenderSection> sectionsThatNeedVisibilityCheck = new ArrayList<>();
 
     public OcclusionCuller(Long2ReferenceMap<RenderSection> sections, Level level) {
         this.sections = sections;
@@ -34,12 +38,15 @@ public class OcclusionCuller {
         final var queues = this.queue;
         queues.reset();
 
-        boolean useVisibilityCulling = true; // todo: setting
+        this.sectionsThatNeedVisibilityCheck.clear();
+
+        boolean useVisibilityCulling = Minecraft.getInstance().player.getInventory().selected != 8; // todo: setting
         this.init(visitor, queues.write(), viewport, searchDistance, useOcclusionCulling, frame);
 
         int iteration = 0;
         while (queues.flip()) {
-            processQueue(visitor, viewport, searchDistance, useOcclusionCulling, useVisibilityCulling && iteration >= 2, frame, queues.read(), queues.write());
+            processQueue(visitor, viewport, searchDistance, useOcclusionCulling, useVisibilityCulling && iteration >= 2, frame,
+                    this.sectionsThatNeedVisibilityCheck, queues.read(), queues.write());
             iteration += 1;
         }
 
@@ -52,6 +59,7 @@ public class OcclusionCuller {
                                      boolean useOcclusionCulling,
                                      boolean useVisibilityCulling,
                                      int frame,
+                                     List<RenderSection> sectionsThatNeedVisibilityCheck,
                                      ReadQueue<RenderSection> readQueue,
                                      WriteQueue<RenderSection> writeQueue)
     {
@@ -62,18 +70,23 @@ public class OcclusionCuller {
                 continue;
             }
 
-            boolean failedVisibilityCheck = RenderSectionManager.DO_VISIBILITY_CHECKS && useVisibilityCulling && (!section.isBuilt() || section.failedVisibilityCheck());
-            if (failedVisibilityCheck) {
-                section.setNeedsVisibilityCheck(true);
-                section.setFailedVisibilityCheck(true);
+//            if (frame > 1000) {
+//                if (section.isBuilt()) {
+//                    visitor.visit(section);
+//                    visitNeighbors(writeQueue, section, getOutwardDirections(viewport.getChunkCoord(), section), frame);
+//                }
+//                continue;
+//            }
+
+            int visibilityFlags = section.getZBufferVisibilityFlags();
+            if (RenderSectionManager.DO_VISIBILITY_CHECKS && useVisibilityCulling && section.getFlags() != 0 && ZBufferVisibilityFlags.needsVisibilityCheck(visibilityFlags)) {
+                sectionsThatNeedVisibilityCheck.add(section);
+                if (!ZBufferVisibilityFlags.isVisible(visibilityFlags)) {
+                    continue;
+                }
             }
 
             visitor.visit(section);
-
-            // todo: don't do this if perfect frames are enabled
-            if (failedVisibilityCheck) {
-                continue;
-            }
 
             int connections;
 
@@ -171,6 +184,14 @@ public class OcclusionCuller {
     }
 
     private static void visitNode(final WriteQueue<RenderSection> queue, @NotNull RenderSection render, int incoming, int frame) {
+//        if (frame > 1000 && !render.isBuilt()) {
+//            return;
+//        }
+
+        if (Math.abs(render.getLastVisibleFrame() - frame) > 1 && (!render.isBuilt() || render.getFlags() != 0)) {
+            ZBufferVisibilityFlags.update(render, ZBufferVisibilityFlags.STATE_UNKNOWN);
+        }
+
         if (render.getLastVisibleFrame() != frame) {
             // This is the first time we are visiting this section during the given frame, so we must
             // reset the state.
@@ -392,6 +413,10 @@ public class OcclusionCuller {
 
     private RenderSection getRenderSection(int x, int y, int z) {
         return this.sections.get(SectionPos.asLong(x, y, z));
+    }
+
+    public List<RenderSection> sectionsThatNeedVisibilityCheck() {
+        return List.copyOf(this.sectionsThatNeedVisibilityCheck); // todo: avoid copy?
     }
 
     public interface Visitor {
